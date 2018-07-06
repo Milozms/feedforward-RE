@@ -7,6 +7,7 @@ import network
 import utils
 import tqdm
 from tensorflow.contrib.tensorboard.plugins import projector
+import test_GRU
 import subprocess
 
 dataset = "TACRED"
@@ -173,19 +174,20 @@ def main(_):
                 path = saver.save(sess, save_path + 'ATT_GRU_model', global_step=current_step)
                 print(path)
                 print("start testing")
-                ret = subprocess.run(['python3', 'test_GRU.py', dataset, str(current_step)], env=my_env, stdout=subprocess.PIPE)
-                ret_str_list = ret.stdout.decode("utf-8").split('\n')
-                a = p = r = f1 = 0.0
-                for r in ret_str_list:
-                    if r.startswith('Accu ='):
-                        tmp = r.split(', ')
-                        a = float(tmp[0].split(' = ')[1])
-                        f1 = float(tmp[1].split(' = ')[1])
-                        r = float(tmp[2].split(' = ')[1])
-                        p = float(tmp[3].split(' = ')[1])
-                        break
-                print("A, F1, P, R:")
-                print(a, f1, p, r)
+                # ret = subprocess.run(['python3', 'test_GRU.py', dataset, str(current_step)], env=my_env, stdout=subprocess.PIPE)
+                # ret_str_list = ret.stdout.decode("utf-8").split('\n')
+                # a = p = r = f1 = 0.0
+                # for r in ret_str_list:
+                #     if r.startswith('Accu ='):
+                #         tmp = r.split(', ')
+                #         a = float(tmp[0].split(' = ')[1])
+                #         f1 = float(tmp[1].split(' = ')[1])
+                #         r = float(tmp[2].split(' = ')[1])
+                #         p = float(tmp[3].split(' = ')[1])
+                #         break
+                # print("A, F1, P, R:")
+                # print(a, f1, p, r)
+                a, f1, p, r = test_GRU.test(sess, dataset)
                 if f1 > best_f1:
                     best_f1 = f1
                     best_precision = p

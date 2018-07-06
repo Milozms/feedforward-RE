@@ -242,11 +242,11 @@ def init():
     print('organizing train data')
     f = open('./data/' + dataset + '/train_q&a.txt', 'w', encoding='utf-8')
     temp = 0
-    for i in train_sen:
+    for i in train_sen: # i is tuple of entity pair
         if len(train_ans[i]) != len(train_sen[i]):
             print('ERROR')
         lenth = len(train_ans[i])
-        for j in range(lenth):
+        for j in range(lenth): # j is label
             train_x.append(train_sen[i][j])
             train_y.append(train_ans[i][j])
             f.write(str(temp) + '\t' + i[0] + '\t' + i[1] + '\t' + str(np.argmax(train_ans[i][j])) + '\n')
