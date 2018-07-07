@@ -39,6 +39,12 @@ def main(_):
     settings.num_classes = len(train_y[0])
     print("vocab_size: ", settings.vocab_size)
     print("num_classes: ", settings.num_classes)
+        
+    test_y = np.load('./data/' + dataset + '/testall_y.npy')
+    test_settings = network.Settings()
+    test_settings.vocab_size = len(wordembedding)
+    test_settings.num_classes = len(test_y[0])
+    test_settings.big_num = len(test_y)
 
     best_f1 = float('-inf')
     best_recall = 0
@@ -49,8 +55,12 @@ def main(_):
         with sess.as_default():
 
             initializer = tf.contrib.layers.xavier_initializer()
-            with tf.variable_scope("model", reuse=None, initializer=initializer):
+            # with tf.variable_scope("model", reuse=None, initializer=initializer):
+            with tf.variable_scope("model", initializer=initializer):
                 m = network.GRU(is_training=True, word_embeddings=wordembedding, settings=settings)
+            with tf.variable_scope("model", reuse=True):
+                mtest = network.GRU(is_training=False, word_embeddings=wordembedding, settings=test_settings)
+                print('Test model constructed.')
 
             global_step = tf.Variable(0, name="global_step", trainable=False)
             # optimizer = tf.train.GradientDescentOptimizer(0.001)
@@ -112,6 +122,8 @@ def main(_):
                 summary_writer.add_summary(summary, step)
                 return step, loss, accuracy
 
+            test_GRU.test(sess, dataset, mtest, test_settings)
+            print('Initial test end.')
             # training process
             for one_epoch in range(settings.num_epochs):
                 print("Starting Epoch: ", one_epoch)
@@ -187,7 +199,7 @@ def main(_):
                 #         break
                 # print("A, F1, P, R:")
                 # print(a, f1, p, r)
-                a, f1, p, r = test_GRU.test(sess, dataset)
+                a, f1, p, r = test_GRU.test(sess, dataset, mtest, test_settings)
                 if f1 > best_f1:
                     best_f1 = f1
                     best_precision = p
