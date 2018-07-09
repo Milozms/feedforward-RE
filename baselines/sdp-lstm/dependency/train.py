@@ -13,7 +13,7 @@ import scorer
 try:
     dataset = sys.argv[1]
 except:
-    dataset = 'kbp'
+    dataset = 'tacred'
 
 tf.app.flags.DEFINE_string('data_dir', '../data_%s/dependency' % dataset, 'Directory of the data')
 tf.app.flags.DEFINE_string('train_dir', './train/rnn_%s' % dataset, 'Directory to save training checkpoint files')
