@@ -1,5 +1,5 @@
 '''
-Position-Aware LSTM for Relation Extraction
+LSTM model for Relation Extraction
 Author: Maosen Zhang
 Email: zhangmaosen@pku.edu.cn
 '''
@@ -12,9 +12,9 @@ from utils import pos2id, ner2id
 import sys
 from tqdm import tqdm
 
-class PositionAwareLSTM(nn.Module):
+class LSTM(nn.Module):
 	def __init__(self, args, rel2id, word_emb=None):
-		super(PositionAwareLSTM, self).__init__()
+		super(LSTM, self).__init__()
 		# arguments
 		hidden, vocab_size, emb_dim, pos_dim, ner_dim, position_dim, attn_dim, num_layers, dropout = \
 			args.hidden, args.vocab_size, args.emb_dim, args.pos_dim, args.ner_dim, \
@@ -25,7 +25,7 @@ class PositionAwareLSTM(nn.Module):
 			assert vocab_size, emb_dim == word_emb.shape
 			self.word_emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID, _weight=torch.from_numpy(word_emb).float())
 			# self.word_emb.weight.data.copy_(torch.from_numpy(word_emb))
-			# self.word_emb.weight.requires_grad = False
+			self.word_emb.weight.requires_grad = False
 		else:
 			self.word_emb = nn.Embedding(vocab_size, emb_dim, padding_idx=utils.PAD_ID)
 			self.word_emb.weight.data[1:, :].uniform_(-1.0, 1.0)
@@ -44,9 +44,11 @@ class PositionAwareLSTM(nn.Module):
 			self.position_emb = nn.Embedding(utils.MAXLEN*2, position_dim)
 			self.position_emb.weight.data.uniform_(-1.0, 1.0)
 
-		# LSTM
-		input_size = emb_dim + pos_dim + ner_dim
-		self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden, num_layers=num_layers, batch_first=True, dropout=dropout)
+		# GRU
+		# input_size = emb_dim + pos_dim + ner_dim
+		input_size = emb_dim + position_dim*2
+		self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden, num_layers=num_layers, batch_first=True,
+							dropout=dropout)
 
 		self.dropout = nn.Dropout(dropout)
 
@@ -54,11 +56,11 @@ class PositionAwareLSTM(nn.Module):
 		feat_dim = hidden*2 + position_dim*2
 		self.attn_dim = attn_dim
 		self.feat_dim = feat_dim
-		self.wlinear = nn.Linear(feat_dim, attn_dim, bias=False)
-		self.vlinear = nn.Linear(attn_dim, 1, bias=False)
+		# self.wlinear = nn.Linear(feat_dim, attn_dim, bias=False)
+		# self.vlinear = nn.Linear(attn_dim, 1, bias=False)
 		self.flinear = nn.Linear(hidden, len(rel2id))
-		self.wlinear.weight.data.normal_(std=0.001)
-		self.vlinear.weight.data.zero_()
+		# self.wlinear.weight.data.normal_(std=0.001)
+		# self.vlinear.weight.data.zero_()
 		self.flinear.weight.data.normal_(std=0.001)
 
 
@@ -75,43 +77,21 @@ class PositionAwareLSTM(nn.Module):
 		emb_pos = self.pos_emb(pos)
 		emb_ner = self.ner_emb(ner)
 
-		input = torch.cat([emb_words, emb_pos, emb_ner], dim=2)
+		emb_subj_pos = self.position_emb(subj_pos + utils.MAXLEN)
+		emb_obj_pos = self.position_emb(obj_pos + utils.MAXLEN)
+
+		# input = torch.cat([emb_words, emb_pos, emb_ner], dim=2)
+		input = torch.cat([emb_words, emb_subj_pos, emb_obj_pos], dim=2).contiguous()
 
 		input = nn.utils.rnn.pack_padded_sequence(input, seq_lens, batch_first=True)
 		output, (hn, cn) = self.lstm(input)  # default: zero state
 		output, output_lens = nn.utils.rnn.pad_packed_sequence(output, batch_first=True)
 
-		output = self.dropout(output)
+		# output = self.dropout(output)
 
-		# hn = torch.stack([output[i, seq_lens[i] - 1, :] for i in range(batch)])
-		hn = hn[-1]
+		final_hidden = hn[-1]
 
-
-		emb_subj_pos = self.position_emb(subj_pos + utils.MAXLEN)
-		emb_obj_pos = self.position_emb(obj_pos + utils.MAXLEN)
-
-		# replicate final state
-		final = hn.unsqueeze(1).expand(batch, maxlen, self.hidden)
-
-		# Position-aware attention
-		attn_input = torch.cat([output, final, emb_subj_pos, emb_obj_pos], dim=2).view(-1, self.feat_dim)
-		attn_ = self.wlinear(attn_input)  # [batch*seq_len, attn_dim]
-		attn_ = F.tanh(attn_)
-		attn_ = self.vlinear(attn_).view(-1, maxlen)  # [batch*seq_len, 1] -> [batch, seq_len]
-
-		# set the score of padding part to -INF (after soft-max: 0)
-		attn_.masked_fill_(masks, -float('inf'))
-
-		attn_weight = F.softmax(attn_, dim=1)  # [batch, seq_len]
-		attn_weight = attn_weight.unsqueeze(1)  # [batch, 1, seq_len]
-
-		z = torch.bmm(attn_weight, output).squeeze(1)  # [batch, 1, hidden] -> [batch, hidden]
-
-		# final hidden layer
-		logits = self.flinear(z)
-
-
-		# logits = self.flinear(hn)
+		logits = self.flinear(final_hidden)
 
 		return logits
 
