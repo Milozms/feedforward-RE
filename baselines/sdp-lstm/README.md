@@ -19,6 +19,7 @@
 For KBP/NYT data:
 
 - Preprocess with HypeNet/shortest_dep.py
+- https://drive.google.com/drive/folders/1YA5p3jIj9eHFef6BsZc62o4e-jHNOFFM?usp=sharing
 
 #### Preprocess:
 
