@@ -1,8 +1,3 @@
-'''
-Convert TACRED data into json format
-Author: Maosen Zhang
-Email: zhangmaosen@pku.edu.cn
-'''
 __author__ = 'Maosen'
 from tqdm import tqdm
 import json

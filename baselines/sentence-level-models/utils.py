@@ -1,8 +1,3 @@
-'''
-Data Loader for Position-Aware LSTM for Relation Extraction
-Author: Maosen Zhang
-Email: zhangmaosen@pku.edu.cn
-'''
 __author__ = 'Maosen'
 import torch
 import torch.utils.data
