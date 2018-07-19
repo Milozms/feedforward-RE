@@ -1,3 +1,6 @@
+'''
+Model wrapper for Relation Extraction
+'''
 __author__ = 'Maosen'
 import torch
 import torch.nn as nn

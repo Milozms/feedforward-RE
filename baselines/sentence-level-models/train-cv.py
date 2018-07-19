@@ -1,3 +1,6 @@
+'''
+Training script with ramdom splitting dev set
+'''
 __author__ = 'Maosen'
 import torch
 from model import Model

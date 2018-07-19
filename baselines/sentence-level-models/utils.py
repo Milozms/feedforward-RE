@@ -1,3 +1,6 @@
+'''
+Data Loader for Position-Aware LSTM for Relation Extraction
+'''
 __author__ = 'Maosen'
 import torch
 import torch.utils.data

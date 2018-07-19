@@ -1,3 +1,6 @@
+'''
+Prepare vocabulary and initial word vectors
+'''
 import json
 import os
 import pickle

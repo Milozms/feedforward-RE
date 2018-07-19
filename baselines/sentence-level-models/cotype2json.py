@@ -1,3 +1,6 @@
+'''
+Convert CoType data into json format
+'''
 __author__ = 'Maosen'
 from tqdm import tqdm
 import json
