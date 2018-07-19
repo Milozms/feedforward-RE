@@ -42,6 +42,7 @@ if __name__ == '__main__':
 	parser.add_argument('--lr', type=float, default=1.0, help='Applies to SGD and Adagrad.')
 	parser.add_argument('--lr_decay', type=float, default=0.9)
 
+	parser.add_argument('--repeat', type=int, default=5)
 	parser.add_argument('--num_epoch', type=int, default=30)
 	parser.add_argument('--batch_size', type=int, default=64)
 	parser.add_argument('--cudaid', type=int, default=0)
@@ -88,19 +89,21 @@ if __name__ == '__main__':
 	# device = torch.device("cpu")
 
 	train_filename = '%s/train.json' % args.data_dir
-	dev_filename = '%s/dev.json' % args.data_dir
-	test_filename = '%s/test.json' % args.data_dir
 	train_dset = Dataset(train_filename, args, word2id, device, shuffle=True)
-	dev_dset = Dataset(dev_filename, args, word2id, device, shuffle=False, rel2id=train_dset.rel2id)
-	test_dset = Dataset(test_filename, args, word2id, device, shuffle=False, rel2id=train_dset.rel2id)
 
 	print('Using device: %s' % device.type)
 
+	# model.eval(dev_dset)
+
 	# Training
 	logging.info(str(args))
-	for runid in range(5):
+	for runid in range(args.repeat):
 		model = Model(args, device, train_dset.rel2id, word_emb=emb_matrix)
 		max_dev_f1 = 0.0
+		# dev_result_on_max_dev_f1 = ()
+		# test_result_on_max_dev_f1 = ()
+		test_filename = '%s/test.json' % args.data_dir
+		dev_dset, test_dset = get_cv_dataset(test_filename, args, word2id, device, train_dset.rel2id)
 		logging.info("Run model : %d" % runid)
 		for iter in range(niter):
 			print('Iteration %d:' % iter)

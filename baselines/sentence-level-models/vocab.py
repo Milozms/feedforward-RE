@@ -125,7 +125,7 @@ def main():
     
     # input files
     train_file = args.data_dir + '/train.json'
-    dev_file = args.data_dir + '/dev.json'
+    # dev_file = args.data_dir + '/dev.json'
     test_file = args.data_dir + '/test.json'
     wv_file = args.glove_dir + '/' + args.wv_file
     wv_dim = args.wv_dim
@@ -138,11 +138,13 @@ def main():
     # load files
     print("loading files...")
     train_tokens = load_tokens(train_file)
-    dev_tokens = load_tokens(dev_file)
+    # dev_tokens = load_tokens(dev_file)
     test_tokens = load_tokens(test_file)
     if args.lower:
-        train_tokens, dev_tokens, test_tokens = [[t.lower() for t in tokens] for tokens in\
-                (train_tokens, dev_tokens, test_tokens)]
+        # train_tokens, dev_tokens, test_tokens = [[t.lower() for t in tokens] for tokens in\
+        #         (train_tokens, dev_tokens, test_tokens)]
+        train_tokens, test_tokens = [[t.lower() for t in tokens] for tokens in \
+                                             (train_tokens, test_tokens)]
 
     # load glove
     print("loading glove...")
@@ -153,7 +155,7 @@ def main():
     v = build_vocab(train_tokens, glove_vocab, args.min_freq)
 
     print("calculating oov...")
-    datasets = {'train': train_tokens, 'dev': dev_tokens, 'test': test_tokens}
+    datasets = {'train': train_tokens, 'test': test_tokens}
     for dname, d in datasets.items():
         total, oov = count_oov(d, v)
         print("{} oov: {}/{} ({:.2f}%)".format(dname, oov, total, oov*100.0/total))
