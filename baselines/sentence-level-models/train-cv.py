@@ -1,7 +1,5 @@
 '''
-Training script for Position-Aware LSTM for Relation Extraction
-Author: Maosen Zhang
-Email: zhangmaosen@pku.edu.cn
+Training script with ramdom splitting dev set
 '''
 __author__ = 'Maosen'
 import torch
@@ -97,7 +95,7 @@ if __name__ == '__main__':
 
 	# Training
 	logging.info(str(args))
-	for runid in range(args.repeat):
+	for runid in range(1, args.repeat+1):
 		model = Model(args, device, train_dset.rel2id, word_emb=emb_matrix)
 		max_dev_f1 = 0.0
 		# dev_result_on_max_dev_f1 = ()

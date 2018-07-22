@@ -1,8 +1,3 @@
-'''
-Training script for Position-Aware LSTM for Relation Extraction
-Author: Maosen Zhang
-Email: zhangmaosen@pku.edu.cn
-'''
 __author__ = 'Maosen'
 import torch
 from model import Model
@@ -42,6 +37,7 @@ if __name__ == '__main__':
 	parser.add_argument('--lr', type=float, default=1.0, help='Applies to SGD and Adagrad.')
 	parser.add_argument('--lr_decay', type=float, default=0.9)
 
+	parser.add_argument('--repeat', type=int, default=5)
 	parser.add_argument('--num_epoch', type=int, default=30)
 	parser.add_argument('--batch_size', type=int, default=64)
 	parser.add_argument('--cudaid', type=int, default=0)
@@ -98,7 +94,7 @@ if __name__ == '__main__':
 
 	# Training
 	logging.info(str(args))
-	for runid in range(1, 6):
+	for runid in range(1, args.repeat+1):
 		model = Model(args, device, train_dset.rel2id, word_emb=emb_matrix)
 		max_dev_f1 = 0.0
 		logging.info("Run model : %d" % runid)
