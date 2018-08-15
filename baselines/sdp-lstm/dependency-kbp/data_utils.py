@@ -44,11 +44,12 @@ EMPTY_ID = '-'
 
 DATA_ROOT = "../data/%s/" % dataset.upper()
 
-TRAIN_DEP_FILE = DATA_ROOT + 'train.json'
+TRAIN_DEP_FILE = DATA_ROOT + 'train_split.json'
 TEST_DEP_FILE = DATA_ROOT + 'test.json'
+DEV_DEP_FILE = DATA_ROOT + 'dev_split.json'
 
-TRAIN_LABEL_FILE = DATA_ROOT + 'train_label.json'
-TEST_LABEL_FILE = DATA_ROOT + 'test_label.json'
+# TRAIN_LABEL_FILE = DATA_ROOT + 'train_label.json'
+# TEST_LABEL_FILE = DATA_ROOT + 'test_label.json'
 
 # hard-coded mappings from fields to ids
 
@@ -164,26 +165,29 @@ MAX_SEQ_LEN = 100
 np.random.seed(1234)
 
 
-def load_datasets(fname, labelfname, maxlen=MAX_SEQ_LEN, lowercase=True):
+def load_datasets(fname, maxlen=MAX_SEQ_LEN, lowercase=True):
 	with open(fname, 'r') as f:
 		instances = json.load(f)
-	with open(labelfname, 'r') as f:
-		labels = json.load(f)
+	# with open(labelfname, 'r') as f:
+	# 	labels = json.load(f)
 	# d = Dataset.load_conll(fn)
 	print "Filtering long seq"
 	dataset = OrderedDict()
 	dataset[WORD_FIELD] = []
 	dataset[POS_FIELD] = []
+	dataset[NER_FIELD] = []
 	dataset[DEPREL_FIELD] = []
 	dataset[LABEL_FIELD] = []
 	dataset[ROOT_FIELD] = []
 	for idx, instance in enumerate(instances):
 		if len(instance[0]) < maxlen:   # filter length
 			words = instance[0]
-			pos = [tok.upper() for tok in instance[1]]  # POS to upper case
+			pos = instance[1]
 			deprel = instance[2]
 			dirs = instance[3]
-			label = labels[idx]
+			ner = instance[4]
+			# label = labels[idx]
+			label = int(instance[5])
 			length = len(dirs)
 			roots = ['_'] * length
 			# find root in path
@@ -193,6 +197,7 @@ def load_datasets(fname, labelfname, maxlen=MAX_SEQ_LEN, lowercase=True):
 					break
 			dataset[WORD_FIELD].append(words)
 			dataset[POS_FIELD].append(pos)
+			dataset[NER_FIELD].append(ner)
 			dataset[DEPREL_FIELD].append(deprel)
 			dataset[ROOT_FIELD].append(roots)
 			dataset[LABEL_FIELD].append(label)
@@ -266,8 +271,9 @@ def convert_fields_to_ids(datasets, field2map):
 
 def preprocess():
 	print "Loading dependency path data from files..."
-	d_train = load_datasets(TRAIN_DEP_FILE, TRAIN_LABEL_FILE, MAX_SEQ_LEN)
-	d_test = load_datasets(TEST_DEP_FILE, TEST_LABEL_FILE, MAX_SEQ_LEN)
+	d_train = load_datasets(TRAIN_DEP_FILE, MAX_SEQ_LEN)
+	d_test = load_datasets(TEST_DEP_FILE, MAX_SEQ_LEN)
+	d_dev = load_datasets(DEV_DEP_FILE, MAX_SEQ_LEN)
 	print "Build vocab from training set..."
 	word2id = build_vocab([d_train], USE_COUNT)
 	VOCAB_SIZE = len(word2id)
@@ -280,39 +286,43 @@ def preprocess():
 	# dump_to_file(LABEL2ID_FILE, label2id)
 
 	print "Converting data to ids..."
-	d_train, d_test = convert_words_to_ids([d_train, d_test], word2id)
-	d_train, d_test = convert_fields_to_ids([d_train, d_test],
-											{POS_FIELD: POS_TO_ID, DEPREL_FIELD: DEPREL_TO_ID})
+	d_train, d_test, d_dev = convert_words_to_ids([d_train, d_test, d_dev], word2id)
+	d_train, d_test, d_dev = convert_fields_to_ids([d_train, d_test, d_dev],
+											{POS_FIELD: POS_TO_ID,
+											 DEPREL_FIELD: DEPREL_TO_ID,
+											 NER_FIELD: NER_TO_ID})
 
 	# generate file names
 	TRAIN_ID_FILE = DATA_ROOT + 'dependency/train.id'
 	TEST_ID_FILE = DATA_ROOT + 'dependency/test.id'
+	DEV_ID_FILE = DATA_ROOT + 'dependency/dev.id'
 	dump_to_file(TRAIN_ID_FILE, d_train)
 	dump_to_file(TEST_ID_FILE, d_test)
+	dump_to_file(DEV_ID_FILE, d_dev)
 	print "Datasets saved to files."
 	max_length = 0
-	for d in [d_train, d_test]:
+	for d in [d_train, d_test, d_dev]:
 		for row in d:
 			l = len(row['token'])
 			if l > max_length:
 				max_length = l
 	print "Datasets maximum sequence length is %d." % max_length
-	print "Generating CV dataset on test set"
-	total_len = len(d_test)
-	dev_len = int(total_len*0.1)
-	dev_list = []
-	test_list = []
-	for i in range(100):
-		d_test.shuffle()
-		dev_list.append(Dataset(d_test[:dev_len]))
-		test_list.append(Dataset(d_test[dev_len:]))
-	idx = 0
-	for dev, test in zip(dev_list, test_list):
-		test_cv_file = DATA_ROOT + 'dependency/cv/test.id.%d' % idx
-		dev_cv_file = DATA_ROOT + 'dependency/cv/dev.id.%d' % idx
-		dump_to_file(test_cv_file, test)
-		dump_to_file(dev_cv_file, dev)
-		idx += 1
+	# print "Generating CV dataset on test set"
+	# total_len = len(d_test)
+	# dev_len = int(total_len*0.1)
+	# dev_list = []
+	# test_list = []
+	# for i in range(100):
+	# 	d_test.shuffle()
+	# 	dev_list.append(Dataset(d_test[:dev_len]))
+	# 	test_list.append(Dataset(d_test[dev_len:]))
+	# idx = 0
+	# for dev, test in zip(dev_list, test_list):
+	# 	test_cv_file = DATA_ROOT + 'dependency/cv/test.id.%d' % idx
+	# 	dev_cv_file = DATA_ROOT + 'dependency/cv/dev.id.%d' % idx
+	# 	dump_to_file(test_cv_file, test)
+	# 	dump_to_file(dev_cv_file, dev)
+	# 	idx += 1
 
 
 def dump_to_file(filename, obj):
@@ -347,7 +357,7 @@ class DataLoader():
 		"""
 		Generate the most simple batch. x_batch is sentences, y_batch is labels, and x_lens is the unpadded length of sentences in x_batch.
 		"""
-		x_batch = {WORD_FIELD: [], POS_FIELD: [], DEPREL_FIELD: [], ROOT_FIELD: []}
+		x_batch = {WORD_FIELD: [], POS_FIELD: [], NER_FIELD: [], DEPREL_FIELD: [], ROOT_FIELD: []}
 		x_lens = []
 		for field in x_batch.keys():
 			for tokens in self.dataset.fields[field][self._pointer:self._pointer + self.batch_size]:
@@ -364,7 +374,7 @@ class DataLoader():
 		return x_batch, y_batch, x_lens
 
 	def get_residual(self):
-		x_batch = {WORD_FIELD: [], POS_FIELD: [], DEPREL_FIELD: [], ROOT_FIELD: []}
+		x_batch = {WORD_FIELD: [], POS_FIELD: [], NER_FIELD: [], DEPREL_FIELD: [], ROOT_FIELD: []}
 		x_lens = []
 		for field in x_batch.keys():
 			for tokens in self.dataset.fields[field][self._pointer:]:

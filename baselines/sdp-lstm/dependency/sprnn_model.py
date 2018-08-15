@@ -3,29 +3,8 @@ import tensorflow as tf
 
 import data_utils
 
-tf.app.flags.DEFINE_integer('num_layers', 2, 'Number of cell layers')
 
-tf.app.flags.DEFINE_integer('hidden_size', 256, 'Size of word embeddings and hidden layers')
-tf.app.flags.DEFINE_integer('pos_size', 32, 'Size of POS embeddings')
-tf.app.flags.DEFINE_integer('ner_size', 32, 'Size of NER embeddings')
-tf.app.flags.DEFINE_integer('deprel_size', 32, 'Size of DepRel embeddings')
-
-tf.app.flags.DEFINE_integer('vocab_size', 11893, 'Vocabulary size')
-tf.app.flags.DEFINE_integer('num_class', 42, 'Number of class to consider')
-
-tf.app.flags.DEFINE_integer('sent_len', 32, 'Input sentence length. This is after the padding is performed.')
-tf.app.flags.DEFINE_float('max_grad_norm', 5.0, 'The maximum norm used to clip the gradients')
-tf.app.flags.DEFINE_float('dropout', 0.5, 'Dropout rate that applies to the LSTM. 0 is no dropout.')
-
-tf.app.flags.DEFINE_boolean('pool', False, 'Add a max pooling layer at the end')
-
-tf.app.flags.DEFINE_boolean('attn', False, 'Whether to use an attention layer')
-tf.app.flags.DEFINE_integer('attn_size', 256, 'Size of attention layer')
-tf.app.flags.DEFINE_float('attn_stddev', 0.001, 'The attention weights are initialized as normal(0, attn_stddev)')
-
-tf.app.flags.DEFINE_boolean('bi', False, 'Whether to use a bi-directional lstm')
-
-FLAGS = tf.app.flags.FLAGS
+# FLAGS = tf.app.flags.FLAGS
 # Vocab size for different fields (other than 'word')
 NUM_POS = len(data_utils.POS_TO_ID)
 NUM_NER = len(data_utils.NER_TO_ID)
@@ -36,14 +15,14 @@ def _variable_on_cpu(name, shape, initializer):
 		var = tf.get_variable(name, shape, initializer=initializer)
 	return var
 
-def _get_lstm_graph_info():
-	total_size = FLAGS.hidden_size + FLAGS.pos_size + FLAGS.ner_size + FLAGS.deprel_size
+def _get_lstm_graph_info(FLAGS):
+	total_size = FLAGS.word_emb_size + FLAGS.pos_size + FLAGS.ner_size + FLAGS.deprel_size
 	if FLAGS.bi:
 		model_name = 'Bi-SPRNN'
 	else:
 		model_name = 'SPRNN'
 	info = 'Building %s graph with [%d layers, %d hidden_size (%d word, %d pos, %d ner, %d deprel)]' % \
-		(model_name, FLAGS.num_layers, total_size, FLAGS.hidden_size, FLAGS.pos_size, FLAGS.ner_size, FLAGS.deprel_size)
+		(model_name, FLAGS.num_layers, total_size, FLAGS.word_emb_size, FLAGS.pos_size, FLAGS.ner_size, FLAGS.deprel_size)
 	if FLAGS.pool:
 		info += ' and a max-pooling layer'
 	if FLAGS.attn:
@@ -51,11 +30,11 @@ def _get_lstm_graph_info():
 	info += ' ...'
 	return info
 
-def _create_embedding_layer(name, vocab_size, dim, inputs, is_train):
+def _create_embedding_layer(name, vocab_size, dim, inputs, is_train, FLAGS):
 	W_emb = _variable_on_cpu(name, shape=[vocab_size, dim], initializer=tf.random_uniform_initializer(minval=-1.0, maxval=1.0))
 	sent_batch = tf.nn.embedding_lookup(params=W_emb, ids=inputs)
 	if is_train:
-		sent_batch = tf.nn.dropout(sent_batch, 1-FLAGS.dropout)
+		sent_batch = tf.nn.dropout(sent_batch, 1-FLAGS.input_dropout)
 	return W_emb, sent_batch
 
 def _get_rnn_cell(hidden_size, num_layers, is_train, dropout):
@@ -81,7 +60,7 @@ def max_over_time(inputs, index, seq_lens):
 	output = tf.reduce_max(valid_inputs, reduction_indices=[0])
 	return output
 
-def attention_over_time(inputs, hidden, params, index, seq_lens):
+def attention_over_time(inputs, hidden, params, index, seq_lens, FLAGS):
 	''' Use with tf.map_fn()
 		Args:
 			inputs: [batch_size, sent_len, dim]
@@ -103,7 +82,7 @@ def attention_over_time(inputs, hidden, params, index, seq_lens):
 	attention = tf.pad(attention, paddings=[[0,0],[0,FLAGS.sent_len-l]], mode='CONSTANT') # pad to [1, sent_len]
 	return attention
 
-def _create_attention_layer(rnn_outputs, rnn_final_hidden, seq_lens, dim, batch_size):
+def _create_attention_layer(rnn_outputs, rnn_final_hidden, seq_lens, dim, batch_size, FLAGS):
 	# initialization: weights ~ n(0, stddev), biases = 0, V = zero vector
 	attn_bias_init = 0.0 # the original attention paper uses 0.0001 for weights initialization
 	attn_size = FLAGS.attn_size
@@ -114,20 +93,20 @@ def _create_attention_layer(rnn_outputs, rnn_final_hidden, seq_lens, dim, batch_
 	attn_V_b = tf.get_variable('attn_V_b', shape=[1], initializer=tf.constant_initializer(attn_bias_init))
 
 	params = [attn_W_h, attn_W_q, attn_b, attn_V, attn_V_b]
-	attention = tf.map_fn(lambda idx: attention_over_time(rnn_outputs, rnn_final_hidden, params, idx, seq_lens), tf.range(0, batch_size), dtype=tf.float32)
+	attention = tf.map_fn(lambda idx: attention_over_time(rnn_outputs, rnn_final_hidden, params, idx, seq_lens, FLAGS), tf.range(0, batch_size), dtype=tf.float32)
 	attn_final_state = tf.reduce_sum(tf.reshape(attention, [-1, FLAGS.sent_len, 1]) * rnn_outputs, [1]) # shape: [batch_size, dim]
 	return attention, attn_final_state
 
-def _create_rnn_along_subpath(subpath_sent_batch, seq_lens, dim, batch_size, is_train):
+def _create_rnn_along_subpath(subpath_sent_batch, seq_lens, dim, batch_size, is_train, FLAGS):
 	"""
 		Build a rnn along the given path and return the resulting path vector.
 	"""
 	# rnn cell
 	if FLAGS.bi:
-		cell_fw, cell_bw = _get_rnn_cell(dim, FLAGS.num_layers, is_train, FLAGS.dropout), \
-				_get_rnn_cell(dim, FLAGS.num_layers, is_train, FLAGS.dropout)
+		cell_fw, cell_bw = _get_rnn_cell(dim, FLAGS.num_layers, is_train, FLAGS.rnn_dropout), \
+				_get_rnn_cell(dim, FLAGS.num_layers, is_train, FLAGS.rnn_dropout)
 	else:
-		cell = _get_rnn_cell(dim, FLAGS.num_layers, is_train, FLAGS.dropout)
+		cell = _get_rnn_cell(dim, FLAGS.num_layers, is_train, FLAGS.rnn_dropout)
 	# rnn layer
 	# NOTE that rnn is doing dynamic batching now so outputs will be tailed by zero vectors in a batch
 	if FLAGS.bi:
@@ -146,7 +125,7 @@ def _create_rnn_along_subpath(subpath_sent_batch, seq_lens, dim, batch_size, is_
 		final_hidden = tf.map_fn(lambda idx: max_over_time(rnn_outputs, idx, seq_lens), tf.range(0, batch_size), dtype=tf.float32)
 	elif FLAGS.attn:
 		# attention layer
-		attention, attn_final_state = _create_attention_layer(rnn_outputs, rnn_final_state, seq_lens, dim, batch_size)
+		attention, attn_final_state = _create_attention_layer(rnn_outputs, rnn_final_state, seq_lens, dim, batch_size, FLAGS)
 		final_hidden = attn_final_state
 	else:
 		final_hidden = rnn_final_state
@@ -158,17 +137,18 @@ class SPRNNModel(object):
 	Left path will be from SUBJ to ROOT, and right path will be from OBJ to ROOT.
 	"""
 
-	def __init__(self, is_train=True):
+	def __init__(self, vocab_size, FLAGS, is_train=True):
 		self.is_train = is_train
-		self.build_graph()
+		self.vocab_size = vocab_size
+		self.build_graph(FLAGS)
 
-	def build_graph(self):
+	def build_graph(self, FLAGS):
 		# sanity check
 		if FLAGS.pool and FLAGS.attn:
 			raise Exception("Max-pooling layer and attention layer cannot be added at the same time.")
 
 		# print graph info
-		print _get_lstm_graph_info()
+		print _get_lstm_graph_info(FLAGS)
 
 		# note that for each tensor here, the left part and right part are stacked together along first dimension
 		self.word_inputs = tf.placeholder(dtype=tf.int32, shape=[None, FLAGS.sent_len], name='input_word')
@@ -184,18 +164,18 @@ class SPRNNModel(object):
 		dim = FLAGS.hidden_size
 
 		# embedding layers
-		self.w_emb, word_sent_batch = _create_embedding_layer('word_embedding', FLAGS.vocab_size, FLAGS.hidden_size, self.word_inputs, self.is_train)
+		self.w_emb, word_sent_batch = _create_embedding_layer('word_embedding', self.vocab_size, FLAGS.word_emb_size, self.word_inputs, self.is_train, FLAGS)
 		sent_batch_list = [word_sent_batch]
 		if FLAGS.pos_size > 0:
-			self.pos_emb, pos_sent_batch = _create_embedding_layer('pos_embedding', NUM_POS, FLAGS.pos_size, self.pos_inputs, self.is_train)
+			self.pos_emb, pos_sent_batch = _create_embedding_layer('pos_embedding', NUM_POS, FLAGS.pos_size, self.pos_inputs, self.is_train, FLAGS)
 			dim += FLAGS.pos_size
 			sent_batch_list.append(pos_sent_batch)
 		if FLAGS.ner_size > 0:
-			self.ner_emb, ner_sent_batch = _create_embedding_layer('ner_embedding', NUM_NER, FLAGS.ner_size, self.ner_inputs, self.is_train)
+			self.ner_emb, ner_sent_batch = _create_embedding_layer('ner_embedding', NUM_NER, FLAGS.ner_size, self.ner_inputs, self.is_train, FLAGS)
 			dim += FLAGS.ner_size
 			sent_batch_list.append(ner_sent_batch)
 		if FLAGS.deprel_size > 0:
-			self.deprel_emb, deprel_sent_batch = _create_embedding_layer('deprel_embedding', NUM_DEPREL, FLAGS.deprel_size, self.deprel_inputs, self.is_train)
+			self.deprel_emb, deprel_sent_batch = _create_embedding_layer('deprel_embedding', NUM_DEPREL, FLAGS.deprel_size, self.deprel_inputs, self.is_train, FLAGS)
 			dim += FLAGS.deprel_size
 			sent_batch_list.append(deprel_sent_batch)
 
@@ -208,9 +188,9 @@ class SPRNNModel(object):
 		left_seq_lens, right_seq_lens = tf.split(axis=0, num_or_size_splits=2, value=self.seq_lens)
 
 		with tf.variable_scope('left_path') as scope:
-			left_final_hidden, left_dim = _create_rnn_along_subpath(left_sent_batch, left_seq_lens, dim, self.batch_size, self.is_train)
+			left_final_hidden, left_dim = _create_rnn_along_subpath(left_sent_batch, left_seq_lens, dim, self.batch_size, self.is_train, FLAGS)
 		with tf.variable_scope('right_path') as scope:
-			right_final_hidden, right_dim = _create_rnn_along_subpath(right_sent_batch, right_seq_lens, dim, self.batch_size, self.is_train)
+			right_final_hidden, right_dim = _create_rnn_along_subpath(right_sent_batch, right_seq_lens, dim, self.batch_size, self.is_train, FLAGS)
 		#
 		final_hidden = tf.concat([left_final_hidden, right_final_hidden], 1, 'final_hidden')
 
@@ -233,7 +213,7 @@ class SPRNNModel(object):
 		self.prediction = tf.squeeze(self.prediction)
 
 		# train on a batch
-		self.lr = tf.Variable(1.0, trainable=False)
+		self.lr = tf.Variable(FLAGS.init_lr, trainable=False)
 		if self.is_train:
 			opt = tf.train.AdagradOptimizer(self.lr)
 			tvars = tf.trainable_variables()

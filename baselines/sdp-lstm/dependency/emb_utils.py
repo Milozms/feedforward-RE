@@ -7,8 +7,6 @@ import argparse
 
 import data_utils
 
-DATA_ROOT = "../data/"
-EMB_ROOT = "../../glove"
 
 np.random.seed(1234)
 
@@ -75,19 +73,25 @@ def prepare_pretrained_embedding(fname, word2id, dim):
 
 def main():
     parser = argparse.ArgumentParser(description="Create initial word embedding matrix from pretrained word vectors.")
-    parser.add_argument('--vocab_size', default=36002, type=int, help='The vocabulary size for the embedding matrix.')
+    # parser.add_argument('--vocab_size', default=36002, type=int, help='The vocabulary size for the embedding matrix.')
     parser.add_argument('--dim', default=300, type=int, help='The dimension of embeddings.')
+    parser.add_argument('--data', default='tacred', type=str, help='Dataset.')
     args = parser.parse_args()
 
+    dataset = args.data
     dim = args.dim
-    vocab_size = args.vocab_size
-    print "Creating embedding matrix of size %d x %d" % (vocab_size, dim)
+    # vocab_size = args.vocab_size
+    # print "Creating embedding matrix of size %d x %d" % (vocab_size, dim)
+
+
+    DATA_ROOT = "../data_%s/" % dataset
+    EMB_ROOT = "../../glove"
     
     emb_file = EMB_ROOT + "/glove.6B.%dd.txt" % dim
     print "Creating embeddings from file " + emb_file
-    word2id = data_utils.load_from_dump(os.path.join(DATA_ROOT, "dependency/%d.vocab" % vocab_size))
+    word2id = data_utils.load_from_dump(os.path.join(DATA_ROOT, "dependency/vocab"))
     embedding = prepare_pretrained_embedding(emb_file, word2id, dim)
-    np.save(DATA_ROOT + 'dependency/emb-v%d-d%d.npy' % (vocab_size, dim), embedding)
+    np.save(DATA_ROOT + 'dependency/emb-%s.npy' % dataset, embedding)
     print "Embedding matrix of size %d x %d has been created and saved!" % (embedding.shape[0], embedding.shape[1])
 
 if __name__ == '__main__':

@@ -5,7 +5,11 @@ import cPickle as pickle
 from collections import Counter
 from collections import OrderedDict
 from stanza.text.dataset import Dataset
+from multiprocessing import Process, Pipe
 import tree
+from tqdm import tqdm
+import math
+import time
 
 try:
 	dataset = sys.argv[1]
@@ -39,9 +43,9 @@ EMPTY_ID = '-'
 
 DATA_ROOT = "../data_%s/" % dataset
 
-TRAIN_FILE = DATA_ROOT + 'tacred/train.anon-direct.conll'
-TEST_FILE = DATA_ROOT + 'tacred/test.anon-direct.conll'
-DEV_FILE = DATA_ROOT + 'tacred/dev.anon-direct.conll'
+TRAIN_FILE = DATA_ROOT + 'train.anon-direct.conll'
+TEST_FILE = DATA_ROOT + 'test.anon-direct.conll'
+DEV_FILE = DATA_ROOT + 'dev.anon-direct.conll'
 
 TRAIN_DEP_FILE = DATA_ROOT + 'dependency/train.deppath.conll'
 TEST_DEP_FILE = DATA_ROOT + 'dependency/test.deppath.conll'
@@ -155,8 +159,6 @@ elif dataset == 'nyt':
 				"/people/person/religion": 22,
 				"/people/person/profession": 23
 				}
-else:
-	raise AttributeError
 
 MAX_SEQ_LEN = 50
 np.random.seed(1234)
@@ -184,22 +186,89 @@ def convert_to_dependency_path(dataset):
 
 	count = 0
 	fail = 0
-	for i, row in enumerate(dataset):
-		t = tree.Tree(row)
-		if t.root is None:  # fail to parse the conll data
+	for i, row in enumerate(tqdm(dataset)):
+		try:
+			t = tree.Tree(row)
+			if t.root is None:  # fail to parse the conll data
+				fail += 1
+				continue
+			# build dependency tree dataset
+			if SHORTEST_PATH_MODE == 'ancestor':
+				path, ancestor_idx = t.get_shortest_path_through_ancestor()
+			else:
+				path, ancestor_idx = t.get_shortest_path_through_root()
+			add_dep_path_to_dataset(path, ancestor_idx, row, dep_dataset)
+			count += 1
+			# if count % 1000 == 0:
+			# print "%d trees constructed." % count
+		except:
 			fail += 1
-			continue
-		# build dependency tree dataset
-		if SHORTEST_PATH_MODE == 'ancestor':
-			path, ancestor_idx = t.get_shortest_path_through_ancestor()
-		else:
-			path, ancestor_idx = t.get_shortest_path_through_root()
-		add_dep_path_to_dataset(path, ancestor_idx, row, dep_dataset)
-		count += 1
-		# if count % 1000 == 0:
-		# print "%d trees constructed." % count
 	print "Total trees constructed: %d" % count
 	print "Total trees failed: %d" % fail
+	dep_dataset = Dataset(dep_dataset)
+	return dep_dataset
+
+
+def convert_to_dependency_path_process(conn, procid):
+	start_time = time.time()
+	dataset = conn.recv()
+	dataset = Dataset(dataset)
+	# print 'Process %d receive dataset' % procid
+	# prepare new dataset
+	dep_dataset = OrderedDict()
+	for k in dataset.fields.keys():
+		dep_dataset[k] = []
+	# add in an ancestor field at the end
+	dep_dataset[ROOT_FIELD] = []
+
+	count = 0
+	fail = 0
+	for i, row in enumerate(dataset):
+		try:
+			t = tree.Tree(row)
+			if t.root is None:  # fail to parse the conll data
+				fail += 1
+				continue
+			# build dependency tree dataset
+			if SHORTEST_PATH_MODE == 'ancestor':
+				path, ancestor_idx = t.get_shortest_path_through_ancestor()
+			else:
+				path, ancestor_idx = t.get_shortest_path_through_root()
+			add_dep_path_to_dataset(path, ancestor_idx, row, dep_dataset)
+			count += 1
+		# if count % 1000 == 0:
+		# print "%d trees constructed." % count
+		except:
+			fail += 1
+		sys.stdout.write("Process %d, parsed %d sentences, Time: %d sec\n" % (procid, i, time.time() - start_time))
+		sys.stdout.flush()
+		conn.send(dep_dataset)
+	return dep_dataset
+
+def convert_to_dependency_path_multi_process(dataset, numOfProcesses):
+	sentsPerProc = int(math.floor(len(dataset) * 1.0 / numOfProcesses))
+	processes = []
+	conns = []
+	for i in range(numOfProcesses):
+		parent_conn, child_conn = Pipe()
+		p = Process(target=convert_to_dependency_path_process, args=(child_conn, i))
+		p.start()
+		if i == numOfProcesses - 1:
+			parent_conn.send(dataset[i * sentsPerProc:])
+		else:
+			parent_conn.send(dataset[i * sentsPerProc:(i + 1) * sentsPerProc])
+		# print 'Process %d start, dataset sent' % i
+		conns.append(parent_conn)
+		processes.append(p)
+	for proc in processes:
+		proc.join()
+	dep_dataset = conns[0].recv()
+	conns.pop(0)
+	for idx, parent_conn in enumerate(conns):
+		print 'Receiving result from process %d' % (idx + 1)
+		tmp_dataset = parent_conn.recv()
+		for key in dep_dataset:
+			dep_dataset[key] += tmp_dataset[key]
 	dep_dataset = Dataset(dep_dataset)
 	return dep_dataset
 
@@ -296,17 +365,25 @@ def convert_fields_to_ids(datasets, field2map):
 	return new_datasets
 
 
-def create_dependency_path_datasets():
-	print "Loading original tacred data from files..."
-	d_train, d_test, d_dev = load_datasets([TRAIN_FILE, TEST_FILE, DEV_FILE])
+def create_dependency_path_datasets(nProc=8):
+	print "Loading original data from files..."
+	d_train, d_test = load_datasets([TRAIN_FILE, TEST_FILE])
 	print "Extracting dependency paths from datasets..."
-	d_train, d_test, d_dev = convert_to_dependency_path(d_train), \
-							 convert_to_dependency_path(d_test), \
-							 convert_to_dependency_path(d_dev)
+	d_train, d_test = convert_to_dependency_path(d_train), \
+							 convert_to_dependency_path(d_test)
 	print "Writing dependency path datasets to files..."
 	d_train.write_conll(TRAIN_DEP_FILE)
 	d_test.write_conll(TEST_DEP_FILE)
-	d_dev.write_conll(DEV_DEP_FILE)
+
+	try:
+		print "Loading original dev data from files..."
+		d_dev = load_datasets([DEV_FILE])[0]
+		print "Extracting dependency paths from datasets..."
+		d_dev = convert_to_dependency_path(d_dev)
+		print "Writing dependency path datasets to files..."
+		d_dev.write_conll(DEV_DEP_FILE)
+	except:
+		pass
 
 
 def preprocess():

@@ -1,6 +1,6 @@
 import data_utils
 
-def _get_feed_dict_for_others(model, x_batch, y_batch, x_lens, use_pos=True, use_ner=False, use_deprel=True):
+def _get_feed_dict_for_others(model, x_batch, y_batch, x_lens, use_pos=True, use_ner=True, use_deprel=True):
     feed = {model.word_inputs:x_batch[data_utils.WORD_FIELD], model.labels:y_batch, model.seq_lens:x_lens}
     if use_pos:
         feed[model.pos_inputs] = x_batch[data_utils.POS_FIELD]
@@ -10,8 +10,8 @@ def _get_feed_dict_for_others(model, x_batch, y_batch, x_lens, use_pos=True, use
         feed[model.deprel_inputs] = x_batch[data_utils.DEPREL_FIELD]
     return feed
 
-def _get_feed_dict_for_sprnn(model, x_batch, y_batch, x_lens, use_pos=True, use_ner=False, use_deprel=True):
-    all_fields = [data_utils.WORD_FIELD, data_utils.POS_FIELD, data_utils.DEPREL_FIELD, data_utils.ROOT_FIELD]
+def _get_feed_dict_for_sprnn(model, x_batch, y_batch, x_lens, use_pos=True, use_ner=True, use_deprel=True):
+    all_fields = [data_utils.WORD_FIELD, data_utils.POS_FIELD, data_utils.NER_FIELD, data_utils.DEPREL_FIELD, data_utils.ROOT_FIELD]
     # convert root sequence into a list of ROOT index's
     root_seq = x_batch[data_utils.ROOT_FIELD]
     max_len = len(root_seq[0])
