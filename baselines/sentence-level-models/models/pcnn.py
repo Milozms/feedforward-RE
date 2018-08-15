@@ -35,12 +35,13 @@ class PCNN(nn.Module):
 			self.ner_emb = nn.Embedding(len(ner2id), ner_dim, padding_idx=utils.PAD_ID)
 			self.ner_emb.weight.data[1:, :].uniform_(-1.0, 1.0)
 
+		self.position_dim = position_dim
 		if position_dim > 0:
 			self.position_emb = nn.Embedding(utils.MAXLEN*2, position_dim)
 			self.position_emb.weight.data.uniform_(-1.0, 1.0)
 
 		# CNN
-		input_size = emb_dim + position_dim*2
+		input_size = emb_dim + position_dim*2 + pos_dim + ner_dim
 		self.input_size = input_size
 		self.cnn = torch.nn.Conv1d(in_channels=1, out_channels=hidden, kernel_size=(input_size, window_size), stride=1)
 		self.pooling = torch.nn.AdaptiveMaxPool1d(1)
@@ -79,18 +80,27 @@ class PCNN(nn.Module):
 		masks = torch.eq(words, utils.PAD_ID)
 		seq_lens = masks.eq(utils.PAD_ID).long().sum(1).squeeze().tolist()
 
-		emb_words = self.word_emb(words)
-		# emb_pos = self.pos_emb(pos)
-		# emb_ner = self.ner_emb(ner)
-
-		emb_subj_pos = self.position_emb(subj_pos + utils.MAXLEN)
-		emb_obj_pos = self.position_emb(obj_pos + utils.MAXLEN)
-
 		piece3mask = (subj_pos >= 0) & (obj_pos >= 0)
 		piece1mask = (subj_pos <= 0) & (obj_pos <= 0)
 		piece2mask = (obj_pos > 0) ^ (subj_pos > 0)
 
-		input = torch.cat([emb_words, emb_subj_pos, emb_obj_pos], dim=2).contiguous()
+		emb_words = self.word_emb(words)
+
+		input_embs = [emb_words]
+
+		if self.position_dim > 0:
+			emb_subj_pos = self.position_emb(subj_pos + utils.MAXLEN)
+			emb_obj_pos = self.position_emb(obj_pos + utils.MAXLEN)
+			input_embs.append(emb_subj_pos)
+			input_embs.append(emb_obj_pos)
+		if self.pos_dim > 0:
+			emb_pos = self.pos_emb(pos)
+			input_embs.append(emb_pos)
+		if self.ner_dim > 0:
+			emb_ner = self.ner_emb(ner)
+			input_embs.append(emb_ner)
+
+		input = torch.cat(input_embs, dim=2).contiguous()
 
 		piece1 = self.masked_conv(input, piece1mask)
 		piece2 = self.masked_conv(input, piece2mask)
