@@ -18,6 +18,8 @@ import random
 import os
 import copy
 
+torch.backends.cudnn.deterministic = True
+
 def split_test_set(ratio=0.1):
 	# split dev set
 	with open('%s/test.json' % args.data_dir, 'r') as f:
@@ -34,17 +36,56 @@ def split_test_set(ratio=0.1):
 		json.dump(test_instances, f)
 
 def train(args):
-	# random.seed(args.seed)
-	# np.random.seed(args.seed)
-	# torch.manual_seed(args.seed)
+	random.seed(args.seed)
+	np.random.seed(args.seed)
+	torch.manual_seed(args.seed)
 
 	# Training
 	logging.info(str(args))
 
 	model = Model(args, device, train_dset.rel2id, word_emb=emb_matrix)
+	logging.info('Model: %s, Parameter Number: %d' % (args.model, model.count_parameters()))
+	max_dev_f1 = 0.0
+	test_result_on_max_dev_f1 = (0.0, 0.0, 0.0)
+	for iter in range(niter):
+		# print('Iteration %d:' % iter)
+		loss = 0.0
+		for idx, batch in enumerate(tqdm(train_dset.batched_data)):
+			loss_batch = model.update(batch)
+			loss += loss_batch
+		loss /= len(train_dset.batched_data)
+		# print('Loss: %f' % loss)
+		valid_loss, (dev_prec, dev_recall, dev_f1) = model.eval(dev_dset)
+		logging.info('Iteration %d, Train loss %f' % (iter, loss))
+		logging.info(
+			'Dev loss/Precision/Recall/F1: {:.6f}\t{:.6f}\t{:.6f}\t{:.6f}'.format(valid_loss, dev_prec, dev_recall,
+																				  dev_f1))
+		test_loss, (test_prec, test_recall, test_f1) = model.eval(test_dset)
+		logging.info(
+			'Test loss/Precision/Recall/F1: {:.6f}\t{:.6f}\t{:.6f}\t{:.6f}'.format(test_loss, test_prec, test_recall,
+																				   test_f1))
+		if dev_f1 > max_dev_f1:
+			max_dev_f1 = dev_f1
+			test_result_on_max_dev_f1 = (test_prec, test_recall, test_f1)
+		# Dynamic update lr
+		model.update_lr(valid_loss)
+	logging.info('Max dev F1: %f' % max_dev_f1)
+	test_p, test_r, test_f1 = test_result_on_max_dev_f1
+	logging.info('Test result on max dev F1 (P,R,F1): {:.6f}\t{:.6f}\t{:.6f}'.format(test_p, test_r, test_f1))
+	csv_file.write('{:.1f}\t{:.1f}\t{:.1f}\t{:.6f}\t{:.6f}\t{:.6f}\t{:.6f}\n'.format(
+		args.in_drop, args.intra_drop, args.out_drop, max_dev_f1, test_p, test_r, test_f1
+	))
+	csv_file.flush()
+	logging.info('\n')
 
-	print('Model: %s, Parameter Number: %d' % (args.model, model.count_parameters()))
+	return max_dev_f1, test_result_on_max_dev_f1
 
+
+def train_random(args):
+	# Training
+	logging.info(str(args))
+
+	model = Model(args, device, train_dset.rel2id, word_emb=emb_matrix)
 	max_dev_f1 = 0.0
 	test_result_on_max_dev_f1 = (0.0, 0.0, 0.0)
 	for iter in range(niter):
@@ -129,9 +170,9 @@ if __name__ == '__main__':
 	parser.add_argument('--info', type=str, default='', help='Optional info for the experiment.')
 	args = parser.parse_args()
 
-	# random.seed(args.seed)
-	# np.random.seed(args.seed)
-	# torch.manual_seed(args.seed)
+	random.seed(args.seed)
+	np.random.seed(args.seed)
+	torch.manual_seed(args.seed)
 
 	logger = logging.getLogger()
 	logger.setLevel(logging.INFO)
@@ -165,13 +206,59 @@ if __name__ == '__main__':
 	train_filename = '%s/train.json' % args.data_dir
 	original_train = Dataset(train_filename, args, word2id, device, shuffle=True)
 	rel2id = original_train.rel2id
+	print('Reading data......')
+	train_filename = '%s/train_split.json' % args.data_dir
+	test_filename = '%s/test.json' % args.data_dir
+	dev_filename = '%s/dev_split.json' % args.data_dir
+	train_dset = Dataset(train_filename, args, word2id, device, rel2id=rel2id, shuffle=True)
+	test_dset = Dataset(test_filename, args, word2id, device, rel2id=rel2id)
+	dev_dset = Dataset(dev_filename, args, word2id, device, rel2id=rel2id)
 
 
 	print('Using device: %s' % device.type)
 
 	csv_file = open("./log/%s.csv" % args.log, 'w')
 
+	best_dev_f1 = 0.0
+	best_setting = copy.deepcopy(args)
+	best_test_result = (0.0, 0.0, 0.0)
+	# in_drop, intra_drop, out_drop = args.in_drop, args.intra_drop, args.out_drop
+
+	for in_drop in [0.4, 0.5, 0.6, 0.7, 0.8]:
+		args.in_drop = in_drop
+		dev_f1, test_result = train(args)
+		if dev_f1 > best_dev_f1:
+			best_dev_f1 = dev_f1
+			best_setting = copy.deepcopy(args)
+			best_test_result = test_result
+	args = copy.deepcopy(best_setting)
+
+	for intra_drop in [0.1, 0.2, 0.3, 0.4]:
+		args.intra_drop = intra_drop
+		dev_f1, test_result = train(args)
+		if dev_f1 > best_dev_f1:
+			best_dev_f1 = dev_f1
+			best_setting = copy.deepcopy(args)
+			best_test_result = test_result
+	args = copy.deepcopy(best_setting)
+
+	for out_drop in [0.4, 0.5, 0.6, 0.7, 0.8]:
+		args.out_drop = out_drop
+		dev_f1, test_result = train(args)
+		if dev_f1 > best_dev_f1:
+			best_dev_f1 = dev_f1
+			best_setting = copy.deepcopy(args)
+			best_test_result = test_result
+	args = copy.deepcopy(best_setting)
+
+	test_p, test_r, test_f1 = best_test_result
+	logging.info('Tuning end.')
+	logging.info('Best setting: %s' % str(best_setting))
+	logging.info('Best result: {:.6f}\t{:.6f}\t{:.6f}'.format(test_p, test_r, test_f1))
+
+
 	for runid in range(1, args.repeat + 1):
+		print('Start repeating......')
 		print('Reading data......')
 		train_filename = '%s/train_split.json' % args.data_dir
 		test_filename = '%s/test.json' % args.data_dir
@@ -181,7 +268,7 @@ if __name__ == '__main__':
 		dev_dset = Dataset(dev_filename, args, word2id, device, rel2id=rel2id)
 
 		logging.info('Run model %d times......' % runid)
-		dev_f1, test_result = train(args)
+		dev_f1, test_result = train_random(args)
 		logging.info('')
 
 	csv_file.close()

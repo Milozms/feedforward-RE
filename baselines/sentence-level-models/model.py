@@ -1,10 +1,15 @@
 '''
 Model wrapper for Relation Extraction
+Author: Maosen Zhang
+Email: zhangmaosen@pku.edu.cn
 '''
 __author__ = 'Maosen'
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+import numpy as np
+import random
+import torch.optim.lr_scheduler as lr_scheduler
 
 import utils
 from models.position_aware_lstm import PositionAwareLSTM
@@ -39,7 +44,10 @@ class Model(object):
 		self.parameters = [p for p in self.model.parameters() if p.requires_grad]
 		# self.parameters = self.model.parameters()
 		self.optimizer = torch.optim.SGD(self.parameters, lr)
+		self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min', patience=3)
 
+	def update_lr(self, valid_loss):
+		self.scheduler.step(valid_loss)
 
 	def update(self, batch):
 		inputs = [p.to(self.device) for p in batch[:-1]]
@@ -53,15 +61,20 @@ class Model(object):
 		self.optimizer.step()
 		return loss.item()
 
+	def fix_parameters(self):
+		for p in self.model.parameters():
+			p.requires_grad = False
+		self.model.flinear.bias.requires_grad = True
+
 	def predict(self, batch):
 		inputs = [p.to(self.device) for p in batch[:-1]]
-		labels = batch[-1].to(self.device)
-		logits = self.model(inputs)
+		labels = batch[-1].to(self.cpu)
+		logits = self.model(inputs).to(self.cpu)
 		loss = self.criterion(logits, labels)
 		pred = torch.argmax(logits, dim=1).to(self.cpu)
 		# corrects = torch.eq(pred, labels)
 		# acc_cnt = torch.sum(corrects, dim=-1)
-		return pred, batch[-1], loss.item()
+		return logits.tolist(), pred, batch[-1], loss.item()
 
 	def eval(self, dset, vocab=None, output_false_file=None):
 		rel_labels = ['']*len(dset.rel2id)
@@ -72,7 +85,7 @@ class Model(object):
 		labels = []
 		loss = 0.0
 		for idx, batch in enumerate(tqdm(dset.batched_data)):
-			pred_b, labels_b, loss_b = self.predict(batch)
+			scores_b, pred_b, labels_b, loss_b = self.predict(batch)
 			pred += pred_b.tolist()
 			labels += labels_b.tolist()
 			loss += loss_b
@@ -106,22 +119,183 @@ class Model(object):
 		loss /= len(dset.batched_data)
 		return loss, utils.eval(pred, labels)
 
+	def CrossValidation(self, test_dset, noneInd=utils.NO_RELATION, ratio=0.1, cvnum=100):
+		'''
+		Tune threshold on test set
+		'''
+		rel_labels = [''] * len(test_dset.rel2id)
+		for label, id in test_dset.rel2id.items():
+			rel_labels[id] = label
+		self.model.eval()
+		pred = []
+		labels = []
+		scores = []
+		loss = 0.0
+		for idx, batch in enumerate(tqdm(test_dset.batched_data)):
+			scores_b, pred_b, labels_b, loss_b = self.predict(batch)
+			pred += pred_b.tolist()
+			labels += labels_b.tolist()
+			scores += scores_b
+			loss += loss_b
+		loss /= len(test_dset.batched_data)
+
+		# start tuning
+		scores = torch.tensor(scores)
+		f1score = 0.0
+		recall = 0.0
+		precision = 0.0
+		meanBestF1 = 0.0
+		pre_ind = utils.calcInd(scores)
+		pre_entropy = utils.calcEntropy(scores)
+		valSize = int(np.floor(ratio * len(pre_ind)))
+		data = [[pre_ind[ind], pre_entropy[ind], labels[ind]] for ind in range(0, len(pre_ind))]
+		print('Tuning threshold......')
+		for cvind in range(cvnum):
+			random.shuffle(data)
+			val = data[0:valSize]
+			eva = data[valSize:]
+
+			# find best threshold
+			max_ent = max(val, key=lambda t: t[1])[1]
+			min_ent = min(val, key=lambda t: t[1])[1]
+			stepSize = (max_ent - min_ent) / 100
+			thresholdList = [min_ent + ind * stepSize for ind in range(0, 100)]
+			ofInterest = 0
+			for ins in val:
+				if ins[2] != noneInd:
+					ofInterest += 1
+			bestThreshold = float('nan')
+			bestF1 = float('-inf')
+			for threshold in thresholdList:
+				corrected = 0
+				predicted = 0
+				for ins in val:
+					if ins[1] < threshold and ins[0] != noneInd:
+						predicted += 1
+						if ins[0] == ins[2]:
+							corrected += 1
+				curF1 = 2.0 * corrected / (ofInterest + predicted)
+				if curF1 > bestF1:
+					bestF1 = curF1
+					bestThreshold = threshold
+			meanBestF1 += bestF1
+			ofInterest = 0
+			corrected = 0
+			predicted = 0
+			for ins in eva:
+				if ins[2] != noneInd:
+					ofInterest += 1
+				if ins[1] < bestThreshold and ins[0] != noneInd:
+					predicted += 1
+					if ins[0] == ins[2]:
+						corrected += 1
+			f1score += (2.0 * corrected / (ofInterest + predicted))
+			recall += (1.0 * corrected / ofInterest)
+			precision += (1.0 * corrected / (predicted + 0.00001))
+
+		meanBestF1 /= cvnum
+		f1score /= cvnum
+		recall /= cvnum
+		precision /= cvnum
+		return loss, f1score, recall, precision, meanBestF1
+
+	def CrossValidation_max_threshold(self, test_dset, noneInd=utils.NO_RELATION, ratio=0.1, cvnum=100):
+		'''
+		Tune threshold on test set
+		'''
+		rel_labels = [''] * len(test_dset.rel2id)
+		for label, id in test_dset.rel2id.items():
+			rel_labels[id] = label
+		self.model.eval()
+		pred = []
+		labels = []
+		scores = []
+		loss = 0.0
+		for idx, batch in enumerate(tqdm(test_dset.batched_data)):
+			scores_b, pred_b, labels_b, loss_b = self.predict(batch)
+			pred += pred_b.tolist()
+			labels += labels_b.tolist()
+			scores += scores_b
+			loss += loss_b
+		loss /= len(test_dset.batched_data)
+
+		# start tuning
+		scores = torch.tensor(scores)
+		f1score = 0.0
+		recall = 0.0
+		precision = 0.0
+		meanBestF1 = 0.0
+		pre_prob, pre_ind = torch.max(scores, 1)
+		valSize = int(np.floor(ratio * len(pre_ind)))
+		data = [[pre_ind[ind], pre_prob[ind], labels[ind]] for ind in range(0, len(pre_ind))]
+		print('Tuning threshold......')
+		for cvind in range(cvnum):
+			random.shuffle(data)
+			val = data[0:valSize]
+			eva = data[valSize:]
+
+			# find best threshold
+			max_ent = max(val, key=lambda t: t[1])[1]
+			min_ent = min(val, key=lambda t: t[1])[1]
+			stepSize = (max_ent - min_ent) / 100
+			thresholdList = [min_ent + ind * stepSize for ind in range(0, 100)]
+			ofInterest = 0
+			for ins in val:
+				if ins[2] != noneInd:
+					ofInterest += 1
+			bestThreshold = float('nan')
+			bestF1 = float('-inf')
+			for threshold in thresholdList:
+				corrected = 0
+				predicted = 0
+				for ins in val:
+					if ins[1] > threshold and ins[0] != noneInd:
+						predicted += 1
+						if ins[0] == ins[2]:
+							corrected += 1
+				curF1 = 2.0 * corrected / (ofInterest + predicted)
+				if curF1 > bestF1:
+					bestF1 = curF1
+					bestThreshold = threshold
+			meanBestF1 += bestF1
+			ofInterest = 0
+			corrected = 0
+			predicted = 0
+			for ins in eva:
+				if ins[2] != noneInd:
+					ofInterest += 1
+				if ins[1] > bestThreshold and ins[0] != noneInd:
+					predicted += 1
+					if ins[0] == ins[2]:
+						corrected += 1
+			f1score += (2.0 * corrected / (ofInterest + predicted))
+			recall += (1.0 * corrected / ofInterest)
+			precision += (1.0 * corrected / (predicted + 0.00001))
+
+		meanBestF1 /= cvnum
+		f1score /= cvnum
+		recall /= cvnum
+		precision /= cvnum
+		return loss, f1score, recall, precision, meanBestF1
+
 	def save(self, filename, epoch):
-		params = {
-			'model': self.model.state_dict(),
-			'config': self.args,
-			'epoch': epoch
-		}
+		# params = {
+		# 	'model': self.model.state_dict(),
+		# 	'config': self.args,
+		# 	'epoch': epoch
+		# }
 		try:
-			torch.save(params, filename)
-			print("model saved to {}".format(filename))
+			torch.save(self.model.state_dict(), filename)
+			print("Epoch {}, model saved to {}".format(epoch, filename))
 		except BaseException:
 			print("[Warning: Saving failed... continuing anyway.]")
 
+	def count_parameters(self):
+		return sum(p.numel() for p in self.model.parameters() if p.requires_grad)
 
 	def load(self, filename):
-		params = torch.load(filename, map_location=self.device.type)
-		self.model.load_state_dict(params['model'])
+		params = torch.load(filename)
+		self.model.load_state_dict(params)
 
 
 

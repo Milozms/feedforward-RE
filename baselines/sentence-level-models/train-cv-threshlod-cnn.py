@@ -44,9 +44,10 @@ def train(args):
 	model = Model(args, device, train_dset.rel2id, word_emb=emb_matrix)
 
 	print('Model: %s, Parameter Number: %d' % (args.model, model.count_parameters()))
+	# model.CrossValidation(test_dset)
 
 	max_dev_f1 = 0.0
-	test_result_on_max_dev_f1 = (0.0, 0.0, 0.0)
+	test_result_on_max_dev_f1 = (0.0, 0.0, 0.0, 0.0)
 	for iter in range(niter):
 		# print('Iteration %d:' % iter)
 		loss = 0.0
@@ -60,21 +61,23 @@ def train(args):
 		logging.info(
 			'Dev loss/Precision/Recall/F1: {:.6f}\t{:.6f}\t{:.6f}\t{:.6f}'.format(valid_loss, dev_prec, dev_recall,
 																				  dev_f1))
-		test_loss, (test_prec, test_recall, test_f1) = model.eval(test_dset)
+		test_loss, test_f1, test_recall, test_prec, test_dev_f1 = model.CrossValidation_max_threshold(test_dset)
 		logging.info(
 			'Test loss/Precision/Recall/F1: {:.6f}\t{:.6f}\t{:.6f}\t{:.6f}'.format(test_loss, test_prec, test_recall,
 																				   test_f1))
 		if dev_f1 > max_dev_f1:
 			max_dev_f1 = dev_f1
-			test_result_on_max_dev_f1 = (test_prec, test_recall, test_f1)
+			test_result_on_max_dev_f1 = (test_prec, test_recall, test_f1, test_dev_f1)
 		# Dynamic update lr
 		model.update_lr(valid_loss)
 	logging.info('Max dev F1: %f' % max_dev_f1)
-	test_p, test_r, test_f1 = test_result_on_max_dev_f1
-	logging.info('Test result on max dev F1 (P,R,F1): {:.6f}\t{:.6f}\t{:.6f}'.format(test_p, test_r, test_f1))
-	csv_file.write('{:.1f}\t{:.1f}\t{:.1f}\t{:.6f}\t{:.6f}\t{:.6f}\t{:.6f}\n'.format(
-		args.in_drop, args.intra_drop, args.out_drop, max_dev_f1, test_p, test_r, test_f1
+	test_p, test_r, test_f1, test_dev_f1 = test_result_on_max_dev_f1
+	logging.info('Test result on max dev F1 (P,R,F1,cdev_F1): {:.6f}\t{:.6f}\t{:.6f}\t{:.6f}'.format(
+		test_p, test_r, test_f1, test_dev_f1))
+	csv_file.write('{:.1f}\t{:.6f}\t{:.6f}\t{:.6f}\t{:.6f}\t{:.6f}\n'.format(
+		args.dropout, max_dev_f1, test_p, test_r, test_f1, test_dev_f1
 	))
+
 	csv_file.flush()
 	logging.info('\n')
 
@@ -85,20 +88,18 @@ def train(args):
 if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser()
-	parser.add_argument('--data_dir', type=str, default='data/KBP')
-	parser.add_argument('--vocab_dir', type=str, default='data/KBP/vocab')
-	parser.add_argument('--model', type=str, default='bgru', help='Model')
+	parser.add_argument('--data_dir', type=str, default='data/json')
+	parser.add_argument('--vocab_dir', type=str, default='data/vocab')
+	parser.add_argument('--model', type=str, default='cnn', help='Model')
 	parser.add_argument('--emb_dim', type=int, default=300, help='Word embedding dimension.')
 	parser.add_argument('--ner_dim', type=int, default=30, help='NER embedding dimension.')
 	parser.add_argument('--pos_dim', type=int, default=30, help='POS embedding dimension.')
-	parser.add_argument('--hidden', type=int, default=200, help='RNN hidden state size.')
+	parser.add_argument('--hidden', type=int, default=230, help='RNN hidden state size.')
 	parser.add_argument('--window_size', type=int, default=3, help='Convolution window size')
 	parser.add_argument('--num_layers', type=int, default=2, help='Num of RNN layers.')
 	parser.add_argument('--bidirectional', dest='bidirectional', action='store_true', help='Bidirectional RNN.' )
 	parser.set_defaults(bidirectional=True)
-	parser.add_argument('--bias', dest='bias', action='store_true', help='Bias term for linear layer.')
-	parser.set_defaults(bias=False)
-	parser.add_argument('--dropout', type=float, default=0.5, help='Input and RNN dropout rate.')
+	parser.add_argument('--dropout', type=float, default=0.4, help='Input and RNN dropout rate.')
 	parser.add_argument('--in_drop', type=float, default=0.5, help='Input dropout rate.')
 	parser.add_argument('--intra_drop', type=float, default=0.3, help='Intra-layer dropout rate.')
 	parser.add_argument('--state_drop', type=float, default=0.5, help='RNN state dropout rate.')
